@@ -1,47 +1,38 @@
 
-import numpy as np
 import pandas as pd
-
-import os
-import math
-import time
-
+import nltk
+import re
+import pickle
+from nltk.tokenize import RegexpTokenizer
 
 # Below libraries are for text processing using NLTK
 from nltk.corpus import stopwords
-from nltk.tokenize import word_tokenize
-from nltk.stem import WordNetLemmatizer
+
+# Below libraries are for similarity matrices using sklearn
+from sklearn.metrics.pairwise import cosine_similarity
 
 # Below libraries are for feature representation using sklearn
 from sklearn.feature_extraction.text import TfidfVectorizer
 
-# Below libraries are for similarity matrices using sklearn
-from sklearn.metrics.pairwise import cosine_similarity  
-from sklearn.metrics import pairwise_distances
+news_articles = pd.read_csv("data/news_data.csv")
 
+nltk.download('stopwords')
+nltk.download('punkt')
+nltk.download('wordnet')
+nltk.download('omw-1.4')
 
-news_articles = pd.read_csv("news_data.csv")
-
-
-
+#Preprocessing of item data
 news_articles = news_articles[news_articles['is_active'] == 'yes']
-
-
 news_articles.rename(columns = {'main_title':'headline'}, inplace = True)
 
-
-news_articles.sort_values('headline',inplace=True, ascending=False)
+#remove duplicates and shorter headlines
 duplicated_articles_series = news_articles.duplicated('headline', keep = False)
 news_articles = news_articles[~duplicated_articles_series]
-print("Total number of articles after removing duplicates:", news_articles.shape[0])
-
 news_articles = news_articles[news_articles['headline'].apply(lambda x: len(x.split())>5)]
-print("Total number of articles after removal of headlines with short title:", news_articles.shape[0])
-
-news_articles.isna().sum()
-
+#drop na values
 news_articles.dropna(inplace = True)
 
+#Replace category_id with category
 di = {
      1:"Fashion",
      2:"Entertainment",
@@ -74,36 +65,67 @@ news_articles.replace({"category_id": di},inplace= True)
 news_articles.rename(columns = {'category_id':'category'}, inplace = True)
 news_articles['created_at'] = pd.to_datetime(news_articles['created_at'],format='%Y-%m-%d',errors='coerce')
 news_articles['date'] = news_articles['created_at'].dt.date
-news_articles.reset_index()
 
-# Adding a new column containing both day of the week and month, it will be required later while recommending based on day of the week and month
-#news_articles["day and month"] = news_articles["date"].dt.strftime("%a") + "_" + news_articles["date"].dt.strftime("%b")
+#Keywords extractor
+cv = pickle.load(open('/Users/vaidehibhagwat/Downloads/TechshotApi/data/cv.pkl','rb'))
+tfidf_transformer = pickle.load(open('/Users/vaidehibhagwat/Downloads/TechshotApi/data/tfidf_transformer.pkl','rb'))
 
-import nltk
-# nltk.download('stopwords')
-# nltk.download('punkt')
-# nltk.download('wordnet')
-# nltk.download('omw-1.4')
+def sort_coo(coo_matrix):
+    tuples = zip(coo_matrix.col, coo_matrix.data)
+    return sorted(tuples, key=lambda x: (x[1], x[0]), reverse=True)
+
+def extract_topn_from_vector(feature_names, sorted_items, topn=10):
+    """get the feature names and tf-idf score of top n items"""
+
+    #use only topn items from vector
+    sorted_items = sorted_items[:topn]
+
+    score_vals = []
+    feature_vals = []
+
+    for idx, score in sorted_items:
+        fname = feature_names[idx]
+
+        #keep track of feature name and its corresponding score
+        score_vals.append(round(score, 3))
+        feature_vals.append(feature_names[idx])
+
+    #create a tuples of feature,score
+    #results = zip(feature_vals,score_vals)
+    results= {}
+    for idx in range(len(feature_vals)):
+        results[feature_vals[idx]]=score_vals[idx]
+
+    return results
+
+feature_names=cv.get_feature_names_out()
+
+
+def extract_topn_keywords(text):
+  # Create tf-idf vector for current row
+  tf_idf_vector = tfidf_transformer.transform(cv.transform([text]))
+
+  # Sort the tf-idf vectors by descending order of scores
+  sorted_items = sort_coo(tf_idf_vector.tocoo())
+
+  # Extract only the top 10 keywords
+  keywords = extract_topn_from_vector(feature_names, sorted_items, 10)
+
+  return keywords
+
+#Cleaning and tokenisation
 stop= set(stopwords.words('english'))
 
-news_articles_temp = news_articles.copy()
-news_articles_temp.astype(str)
-news_articles_temp.dtypes
-
-news_articles_temp["headline"] = news_articles_temp["headline"].apply(lambda words: ' '.join(word.lower() for word in words.split() if word not in stop))
-
-
+news_articles["headline"] = news_articles["headline"].apply(lambda words: ' '.join(word.lower() for word in words.split() if word not in stop))
 w_tokenizer = nltk.tokenize.WhitespaceTokenizer()
 lemmatizer = nltk.stem.WordNetLemmatizer()
 def lemmatize_text(text):
     return [lemmatizer.lemmatize(w) for w in w_tokenizer.tokenize(text)]
 
-news_articles_temp["headline"] = news_articles_temp["headline"].apply(lemmatize_text)
-news_articles_temp["headline"] = news_articles_temp["headline"].apply(lambda x : " ".join(x))
+news_articles["headline"] = news_articles["headline"].apply(lemmatize_text)
+news_articles["headline"] = news_articles["headline"].apply(lambda x : " ".join(x))
 
 
-from nltk.tokenize import RegexpTokenizer
-import re
 # Function for removing NonAscii characters
 def _removeNonAscii(s):
     return "".join(i for i in s if  ord(i)<128)
@@ -129,102 +151,45 @@ def remove_html(text):
     return html_pattern.sub(r'', text)
 #Function for removing rdquo, ldquo, quot
 def remove_words(text):
-  word_list = ["rdquo","ldquo","quot"]
+  word_list = ["rdquo","ldquo","quot","href","p","h2","style","text","align"]
   tokenizer = RegexpTokenizer(r'\w+')
   words = tokenizer.tokenize(text)
   text = ' '.join([word for word in words if word not in word_list])
   return text
-  
+
+
 # Applying all the functions in description and storing as a cleaned_desc
-news_articles_temp['cleaned_desc'] = news_articles_temp['short_description'].apply(_removeNonAscii)
-news_articles_temp['cleaned_desc'] = news_articles_temp.cleaned_desc.apply(func = make_lower_case)
-news_articles_temp['cleaned_desc'] = news_articles_temp.cleaned_desc.apply(func = remove_stop_words)
-news_articles_temp['cleaned_desc'] = news_articles_temp.cleaned_desc.apply(func=remove_punctuation)
-news_articles_temp['cleaned_desc'] = news_articles_temp.cleaned_desc.apply(func=remove_words)
-news_articles_temp['cleaned_desc'] = news_articles_temp.cleaned_desc.apply(func=remove_html)
+news_articles['cleaned_desc'] = news_articles['short_description'].apply(_removeNonAscii)
+news_articles['cleaned_desc'] = news_articles.cleaned_desc.apply(func = make_lower_case)
+news_articles['cleaned_desc'] = news_articles.cleaned_desc.apply(func = remove_stop_words)
+news_articles['cleaned_desc'] = news_articles.cleaned_desc.apply(func=remove_punctuation)
+news_articles['cleaned_desc'] = news_articles.cleaned_desc.apply(func=remove_words)
+news_articles['cleaned_desc'] = news_articles.cleaned_desc.apply(func=remove_html)
+news_articles['keyword_extracted'] = news_articles['cleaned_desc'].apply(extract_topn_keywords)
 
-news_articles_temp.reset_index()
+news_articles['keys'] = news_articles['keyword_extracted'].apply(lambda x: ' '.join(x.keys()))
+news_articles.drop(['short_description','is_active','keyword_extracted','created_at'],axis=1, inplace=True)
 
-pd.set_option('display.max_colwidth', -1)
+# create content-based recommendation
+tfidf = TfidfVectorizer(stop_words='english')
+news_articles['content'] = news_articles['headline'] + ' ' + news_articles['cleaned_desc'] + ' ' + news_articles['keys'].fillna('')
+tfidf_matrix = tfidf.fit_transform(news_articles['content'])
+content_similarity = cosine_similarity(tfidf_matrix, tfidf_matrix)
 
-#TF-IDF
-tfidf_headline_vectorizer = TfidfVectorizer(min_df = 0)
-tfidf_headline_features = tfidf_headline_vectorizer.fit_transform(news_articles_temp['headline'])
-tfidf_desc_features = tfidf_headline_vectorizer.fit_transform(news_articles_temp['cleaned_desc'])
-#based on category and headline
-from sklearn.preprocessing import OneHotEncoder 
-category_onehot_encoded = OneHotEncoder().fit_transform(np.array(news_articles_temp["category"]).reshape(-1,1))
+def recommend_articles(news_id, top_k=11):
+    # Find the index of the given news_id
+    if news_id not in news_articles['id'].to_list():
+        return []
+    article_index = news_articles[news_articles['id'] == news_id].index[0]
 
-def tf_idf_based_model(row_index, num_similar_items,w1,w2,w3):
-    couple_dist = pairwise_distances(tfidf_headline_features,tfidf_headline_features[row_index].reshape(1,-1))
-    couple_desc_dist = pairwise_distances(tfidf_desc_features,tfidf_desc_features[row_index].reshape(1,-1))
-    category_dist = pairwise_distances(category_onehot_encoded, category_onehot_encoded[row_index]) + 1
-    weighted_couple_dist   = (w1 * couple_dist +  w2 * couple_desc_dist +  w3 * category_dist)/float(w1 + w2 + w3)
-    indices = np.argsort(weighted_couple_dist.flatten())[0:num_similar_items].tolist()
-    print(indices)
-    df = pd.DataFrame({'publish_date': news_articles['date'][indices].values,
-               'headline':news_articles['headline'][indices].values,
-               'Weighted Euclidean similarity with the queried article': weighted_couple_dist[indices].ravel(),
-               'Headline similarity': couple_dist[indices].ravel(),
-               'Desc similarity': couple_desc_dist[indices].ravel(),
-               'Category based Euclidean similarity': category_dist[indices].ravel(),
-               'Category': news_articles['category'][indices].values,
-               'Desc': news_articles['short_description'][indices].values
-               })
-    # print("="*30,"Queried article details","="*30)
-    # print('headline : ',news_articles['headline'][indices[0]])
-    # print('category : ',news_articles['category'][indices[0]])
-    # print('desc : ',news_articles['short_description'][indices[0]])
-    # print("\n","="*25,"Recommended articles : ","="*23)
-    indices.pop(0)
-    rec=[]
-    for i in indices:
-        rec.append('News article {iid} (predicted rating: {est})'.format(iid=news_articles['id'][i],est=weighted_couple_dist[i].ravel())) 
-    
-    #return df.iloc[1:,1]
-    return rec
+    # Get the similarity scores for the given article
+    article_scores = content_similarity[article_index]
 
+    # Sort the articles based on similarity scores
+    top_indices = article_scores.argsort()[::-1][:top_k]
 
-
-
-# from flask import Flask, render_template, request
-
-# app = Flask(__name__)
-
-
-# @app.route('/home', methods=['GET', 'POST'])
-# def home():
-#     if request.method == 'POST':
-#         input_data = request.form['input']
-       
-#         list1 = [1, 2, 3]
-#         list2 = ['a', 'b', 'c']
-#         return render_template("home.html", list1=list1, list2=list2)
-
-        
-#     else:
-#         return render_template('result.html')
-    
-
-# @app.route('/',methods=['GET', 'POST'])
-# def home():
-#     if request.method == 'POST':
-#         input_data = request.form['input']
-       
-#         list1 = ["Microsoft headquarters to open on Feb 28th for all employees",
-# "Telecom deals will transform mobile payments in India"	,
-# "Google to allow 32 people on Duo video call soon",
-# "MG Motor India collaborates with Cognizant for India’s first ‘Connected Internet Car’",	
-# "	New malware EventBot may attack Indian banking apps	",
-# "First AI and Robotic Tech park launched in Karnataka",
-# "This is how Raymond is fuelling digital transformation",
-# "Google Employees who work from home could be facing a pay cut",
-# "Facebook disabled 1.3 bn fake accounts between Oct-Dec 2020	",
-# "Quick Heal makes a strategic investment in Ray"]
-#         list2 = [	2.828427,2.828427,	2.828427,2.828427,3.000000,3.000000,3.000000,3.000000,3.000000,3.000000]
-#         return render_template("home.html",show_lists=True, list1=list1, list2=list2)
-#     else:
-#         return render_template('home.html')
-# if __name__ == "__main__":
-#     app.run()
+    # Get the news_ids of the recommended articles
+    recommended_news_ids = news_articles.loc[top_indices, 'id'].tolist()
+    recommended_news_ids.pop(0)
+    return recommended_news_ids
 
