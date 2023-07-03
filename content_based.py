@@ -4,6 +4,7 @@ import nltk
 import re
 import pickle
 from nltk.tokenize import RegexpTokenizer
+from datetime import datetime, timedelta
 
 # Below libraries are for text processing using NLTK
 from nltk.corpus import stopwords
@@ -168,18 +169,16 @@ news_articles['cleaned_desc'] = news_articles.cleaned_desc.apply(func=remove_htm
 news_articles['keyword_extracted'] = news_articles['cleaned_desc'].apply(extract_topn_keywords)
 
 news_articles['keys'] = news_articles['keyword_extracted'].apply(lambda x: ' '.join(x.keys()))
-news_articles.drop(['short_description','is_active','keyword_extracted','created_at'],axis=1, inplace=True)
+news_articles.drop(['short_description','is_active','keyword_extracted'],axis=1, inplace=True)
 
 # create content-based recommendation
 tfidf = TfidfVectorizer(stop_words='english')
-news_articles['content'] = news_articles['headline'] + ' ' + news_articles['cleaned_desc'] + ' ' + news_articles['keys'].fillna('')
+news_articles['content'] = news_articles['headline'] + ' ' + news_articles['category'] + ' ' + news_articles['cleaned_desc'] + ' ' + news_articles['keys'].fillna('')
 tfidf_matrix = tfidf.fit_transform(news_articles['content'])
 content_similarity = cosine_similarity(tfidf_matrix, tfidf_matrix)
 
 def recommend_articles(news_id, top_k=11):
-    # Find the index of the given news_id
-    if news_id not in news_articles['id'].to_list():
-        return []
+    #Find the index of the given news_id
     article_index = news_articles[news_articles['id'] == news_id].index[0]
 
     # Get the similarity scores for the given article
@@ -189,7 +188,15 @@ def recommend_articles(news_id, top_k=11):
     top_indices = article_scores.argsort()[::-1][:top_k]
 
     # Get the news_ids of the recommended articles
-    recommended_news_ids = news_articles.loc[top_indices, 'id'].tolist()
-    recommended_news_ids.pop(0)
-    return recommended_news_ids
+    recommended_articles = news_articles.loc[top_indices, ['id', 'created_at']]
+
+    # Filter the recommended articles to include only those not older than 2 weeks
+    target_created_at = news_articles.loc[news_articles['id'] == news_id, 'created_at'].iloc[0]
+    two_weeks_ago = datetime.now() - timedelta(weeks=2)
+    latest_recommended_articles = recommended_articles[
+        # (recommended_articles['created_at'] > two_weeks_ago) &
+        (recommended_articles['created_at'] > target_created_at)
+    ]
+    
+    return latest_recommended_articles['id'].tolist()
 
