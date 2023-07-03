@@ -3,7 +3,6 @@ import nltk
 import re
 import pickle
 import mysql.connector as mysql
-
 from nltk.tokenize import RegexpTokenizer
 from datetime import datetime, timedelta
 
@@ -16,26 +15,18 @@ from sklearn.metrics.pairwise import cosine_similarity
 # Below libraries are for feature representation using sklearn
 from sklearn.feature_extraction.text import TfidfVectorizer
 
+
 nltk.download('stopwords')
 nltk.download('punkt')
 nltk.download('wordnet')
 nltk.download('omw-1.4')
 
-#sql connection
-myconn = mysql.connect(host='212.1.210.87',database='techshot_next_test', user='techshot_power_bi', password='PowerBIAdmin123')
-mycursor = myconn.cursor()
-
-sql = "SELECT id,main_title,short_description, createdAt FROM News"
-
-mycursor.execute(sql)
-myresult = mycursor.fetchall()
-news_articles = pd.DataFrame(myresult)
+#Load data
+news_articles = pd.read_csv("data/news_data.csv")
 
 #Preprocessing of item data
-news_articles.rename(columns = {0:'id'}, inplace = True)
-news_articles.rename(columns = {1:'headline'}, inplace = True)
-news_articles.rename(columns = {2:'short_description'}, inplace = True)
-news_articles.rename(columns = {3:'created_at'}, inplace = True)
+news_articles = news_articles[news_articles['is_active'] == 'yes']
+news_articles.rename(columns = {'main_title':'headline'}, inplace = True)
 
 #remove duplicates and shorter headlines
 duplicated_articles_series = news_articles.duplicated('headline', keep = False)
@@ -43,12 +34,44 @@ news_articles = news_articles[~duplicated_articles_series]
 news_articles = news_articles[news_articles['headline'].apply(lambda x: len(x.split())>5)]
 #drop na values
 news_articles.dropna(inplace = True)
+
+#Replace category_id with category
+di = {
+     1:"Fashion",
+     2:"Entertainment",
+     3:"Buisness",
+     4:"Sports",
+     9:"Technology",
+     12:"Test",
+     13:"Elections",
+     14:"Test",
+     15:"World",
+     19:"Security",
+     20:"Big Data",
+     21:"Cloud",
+     22:"AI",
+     23:"IOT",
+     24:"Blockchain",
+     25:"Automation",
+     26:"Digital Transformation",
+     27:"AR/VR",
+     28:"Others",
+     29:"Buisness",
+     30:"Buisness",
+     31:"People",
+     32:"NASSCOM Research",
+     33:"Startup",
+     34:"Case Study"
+     }
+
+news_articles.replace({"category_id": di},inplace= True)
+news_articles.rename(columns = {'category_id':'category'}, inplace = True)
 news_articles['created_at'] = pd.to_datetime(news_articles['created_at'],format='%Y-%m-%d',errors='coerce')
 news_articles['date'] = news_articles['created_at'].dt.date
 
 #Keywords extractor
-cv = pickle.load(open('data/cv.pkl','rb'))
-tfidf_transformer = pickle.load(open('data/tfidf_transformer.pkl','rb'))
+cv = pickle.load(open('/Users/vaidehibhagwat/Downloads/TechshotApi/data/cv.pkl','rb'))
+tfidf_transformer = pickle.load(open('/Users/vaidehibhagwat/Downloads/TechshotApi/data/tfidf_transformer.pkl','rb'))
 
 def sort_coo(coo_matrix):
     tuples = zip(coo_matrix.col, coo_matrix.data)
@@ -148,16 +171,16 @@ news_articles['cleaned_desc'] = news_articles.cleaned_desc.apply(func=remove_htm
 news_articles['keyword_extracted'] = news_articles['cleaned_desc'].apply(extract_topn_keywords)
 
 news_articles['keys'] = news_articles['keyword_extracted'].apply(lambda x: ' '.join(x.keys()))
-news_articles.drop(['short_description','keyword_extracted'],axis=1, inplace=True)
+news_articles.drop(['short_description','is_active','keyword_extracted'],axis=1, inplace=True)
 
 # create content-based recommendation
 tfidf = TfidfVectorizer(stop_words='english')
-news_articles['content'] = news_articles['headline'] + ' ' + news_articles['cleaned_desc'] + ' ' + news_articles['keys'].fillna('')
+news_articles['content'] = news_articles['headline'] + ' ' + news_articles['category'] + ' ' + news_articles['cleaned_desc'] + ' ' + news_articles['keys'].fillna('')
 tfidf_matrix = tfidf.fit_transform(news_articles['content'])
 content_similarity = cosine_similarity(tfidf_matrix, tfidf_matrix)
 
-def recommend_articles(news_id, top_k):
-    # Find the index of the given news_id
+def recommend_articles(news_id, top_k=11):
+    #Find the index of the given news_id
     article_index = news_articles[news_articles['id'] == news_id].index[0]
 
     # Get the similarity scores for the given article
@@ -167,7 +190,7 @@ def recommend_articles(news_id, top_k):
     top_indices = article_scores.argsort()[::-1][:top_k]
 
     # Get the news_ids of the recommended articles
-    recommended_articles = news_articles[['id', 'created_at']].iloc[top_indices]
+    recommended_articles = news_articles.loc[top_indices, ['id', 'created_at']]
 
     # Filter the recommended articles to include only those not older than 2 weeks
     target_created_at = news_articles.loc[news_articles['id'] == news_id, 'created_at'].iloc[0]
@@ -176,5 +199,6 @@ def recommend_articles(news_id, top_k):
         # (recommended_articles['created_at'] > two_weeks_ago) &
         (recommended_articles['created_at'] > target_created_at)
     ]
-
+    
     return latest_recommended_articles['id'].tolist()
+
