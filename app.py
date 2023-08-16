@@ -19,7 +19,7 @@ app = Flask(__name__)
 CORS(app)
 
 # Set up OpenAI API credentials
-OPENAI_API_KEY = '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'
+OPENAI_API_KEY = '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'
 openai.api_key = OPENAI_API_KEY
 # RSS scraping and data extraction
 def parse_content(cfinal):
@@ -230,7 +230,7 @@ def extract_topn_keywords(id,summary):
 
 # Create empty list to store results
     # results = []
-    feature_names=cv.get_feature_names()
+    feature_names=cv.get_feature_names_out()
     # Loop through each row in content column
     # for summary in df['summary']:
 
