@@ -7,3 +7,4 @@ pip install scikit-learn==1.3.0
 pip install beautifulsoup4==4.11.1
 pip install bs4==0.0.1
 pip install pickle
+pip install flask
