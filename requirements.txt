@@ -1,2 +1,5 @@
 pip install mysql-connector-python
 pip install nltk
+pip install pandas
+pip install openai
+pip install lxml
