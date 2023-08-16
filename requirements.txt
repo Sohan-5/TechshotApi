@@ -3,3 +3,4 @@ pip install nltk
 pip install pandas
 pip install openai
 pip install lxml
+pip install scikit-learn==1.3.0
